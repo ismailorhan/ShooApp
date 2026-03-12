@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat /c/Users/ismail.orhan/Documents/Apps/ShooApp/*.py)",
+      "Bash(start pythonw:*)",
+      "Bash(tasklist)",
+      "Bash(taskkill /PID 11292 /F)",
+      "Bash(py shoo.py)",
+      "Bash(py -c \"import pystray; print\\(pystray.__version__\\); import inspect; print\\(inspect.getfile\\(pystray\\)\\)\")",
+      "Bash(py -m pip show pystray)",
+      "Bash(py -c \":*)",
+      "Bash(where pythonw:*)",
+      "Bash(taskkill /PID 10340 /F)",
+      "Bash(py -m pip show pyinstaller)",
+      "Bash(py -m PyInstaller --onefile --windowed --name ShooApp --icon=NONE shoo.py)",
+      "Bash(py -m PyInstaller --onefile --windowed --name ShooApp shoo.py)",
+      "Bash(py -m PyInstaller --onefile --windowed --name ShooApp --icon=shooapp.ico shoo.py)",
+      "Bash(taskkill /IM ShooApp.exe /F)",
+      "Bash(taskkill /IM pythonw.exe /F)",
+      "Bash(ie4uinit.exe -show)",
+      "Bash(taskkill /IM explorer.exe /F)",
+      "Bash(start explorer.exe)",
+      "Bash(cmd /c \"taskkill /IM explorer.exe /F & ping -n 3 127.0.0.1 > nul & start explorer.exe\")",
+      "Bash(cmd /c \"del /f /q %localappdata%\\\\IconCache.db & del /f /q %localappdata%\\\\Microsoft\\\\Windows\\\\Explorer\\\\iconcache*.db\")",
+      "Bash(cmd /c \"ie4uinit.exe -show\")",
+      "Bash(cmd /c \"taskkill /F /IM explorer.exe 2>nul & attrib -h \"\"%LocalAppData%\\\\IconCache.db\"\" 2>nul & del /F /Q \"\"%LocalAppData%\\\\IconCache.db\"\" 2>nul & for %f in \\(\"\"%LocalAppData%\\\\Microsoft\\\\Windows\\\\Explorer\\\\iconcache_*.db\"\"\\) do del /F /Q \"\"%f\"\" 2>nul & start explorer.exe\")",
+      "Bash(py -m PyInstaller --onefile --windowed --name Shoo --icon=shooapp.ico shoo.py)",
+      "Bash(cmd /c \"taskkill /F /IM explorer.exe 2>nul & del /F /Q \"\"%LocalAppData%\\\\IconCache.db\"\" 2>nul & del /F /Q \"\"%LocalAppData%\\\\Microsoft\\\\Windows\\\\Explorer\\\\iconcache_*.db\"\" 2>nul\")",
+      "Bash(rm -f \"/c/Users/ismail.orhan/Documents/Apps/ShooApp/dist/ShooApp.exe\")",
+      "Bash(py -m PyInstaller --onefile --windowed --clean --name ShooApp --icon=shooapp.ico shoo.py)",
+      "Bash(cmd /c \"start explorer.exe\")",
+      "Bash(cmd /c \"taskkill /F /IM explorer.exe 2>nul & start explorer.exe\")",
+      "Bash(cmd /c \"start /B explorer.exe\")",
+      "Bash(TaskOutput bj2w5beu7:*)",
+      "Bash(py -c \"import subprocess; subprocess.Popen\\([''explorer.exe'']\\)\")"
+    ]
+  }
+}
