@@ -342,9 +342,8 @@ def main() -> None:
         title=f"ShooApp \u2014 {len(_get_apps())} apps",
     )
 
-    icon._left_menu  = _build_app_menu(icon)
-    icon._right_menu = _build_action_menu(icon)
-    icon.menu        = icon._right_menu
+    icon._left_menu = _build_app_menu(icon)
+    icon.menu       = icon._left_menu
 
     def setup(icon):
         icon.visible = True
@@ -387,7 +386,7 @@ def main() -> None:
                 icon.title = f"ShooApp \u2014 {len(_get_apps())} apps"
                 _show_menu_for(icon._left_menu)
             elif lparam == WM_RBUTTONUP:
-                _show_menu_for(icon._right_menu)
+                threading.Thread(target=_show_panel, args=(icon,), daemon=True).start()
 
         icon._on_notify = _patched_on_notify
         from pystray._util import win32 as _win32
