@@ -5,22 +5,33 @@ A lightweight Windows system tray app for uninstalling programs — without open
 ## What it does
 
 - Sits in the system tray
-- **Left-click** → browse all installed apps grouped by publisher
-- Hover over a publisher to see its apps
-- Click **Remove AppName** to uninstall it
-- **Right-click** → Refresh list / Quit
+- **Left-click** → opens a dark floating panel with all installed apps
+  - Search bar with live filtering
+  - Table view: Application, Version, Installed date
+  - Double-click or press Enter to launch the uninstaller
+  - Refresh button to update the list
+- **Right-click** → Quit
+- **Hover** over the tray icon → tooltip refreshes and shows current app count
 
 ## Screenshot
 
-> Left-click the tray icon to open the app list grouped by publisher.
+> Left-click the tray icon to open the dark app panel.
 
 ```
-▶ Adobe Inc.
-      Remove  Adobe Acrobat  24.0
-▶ Microsoft Corporation
-      Remove  Visual Studio Code  1.87
-▶ (Other)
-      Remove  SomeApp  1.0
+┌─────────────────────────────────────────────┐
+│ 🔴 ShooApp                                  │
+├─────────────────────────────────────────────┤
+│ 210 apps installed                          │
+│ 🔍 Search apps...                           │
+├──────────────────────┬──────────┬───────────┤
+│ Application          │ Version  │ Installed │
+├──────────────────────┼──────────┼───────────┤
+│ Adobe Acrobat        │ 24.0     │ 01.03.2025│
+│ Visual Studio Code   │ 1.87     │ 15.02.2025│
+│ ...                  │          │           │
+├─────────────────────────────────────────────┤
+│ [🔄 Refresh]                                │
+└─────────────────────────────────────────────┘
 ```
 
 ## Requirements
