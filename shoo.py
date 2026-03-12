@@ -58,12 +58,20 @@ def _load_apps() -> list[dict]:
                                     publisher = winreg.QueryValueEx(sub, "Publisher")[0].strip()
                                 except OSError:
                                     pass
+                                install_date = ""
+                                try:
+                                    raw = winreg.QueryValueEx(sub, "InstallDate")[0].strip()
+                                    if len(raw) == 8 and raw.isdigit():
+                                        install_date = f"{raw[6:]}.{raw[4:6]}.{raw[:4]}"
+                                except OSError:
+                                    pass
                                 seen.add(name)
                                 apps.append({
                                     "name": name,
                                     "version": version,
                                     "uninstall": uninstall,
                                     "publisher": publisher,
+                                    "install_date": install_date,
                                 })
                             except OSError:
                                 pass
@@ -153,13 +161,17 @@ def _build_app_items(icon: pystray.Icon) -> list:
             ).start()
         return _fn
 
+    all_apps = [a for g in groups.values() for a in g]
+    max_ver = max((len(a["version"]) for a in all_apps if a["version"]), default=10)
+
     items = []
     for pub in sorted(groups, key=str.lower):
         app_items = []
         for app in sorted(groups[pub], key=lambda x: x["name"].lower()):
-            label = f"Remove  {app['name']}"
-            if app["version"]:
-                label += f"  {app['version']}"
+            ver  = app["version"].ljust(max_ver) if app["version"] else " " * max_ver
+            date = app["install_date"] if app["install_date"] else " " * 10
+            right = f"{ver}    {date}"
+            label = f"Remove \u2192  {app['name']}\t{right}"
             app_items.append(pystray.MenuItem(label, make_uninstall(app)))
         items.append(pystray.MenuItem(pub, pystray.Menu(*app_items)))
 
@@ -170,29 +182,129 @@ def _build_app_menu(icon: pystray.Icon) -> pystray.Menu:
     return pystray.Menu(*_build_app_items(icon))
 
 
-def _build_action_menu(icon: pystray.Icon) -> pystray.Menu:
-    def refresh_fn(icon, item):
-        threading.Thread(target=_force_refresh, args=(icon,), daemon=True).start()
+def _show_panel(icon: pystray.Icon) -> None:
+    BG       = "#1e1e1e"
+    BG2      = "#2a2a2a"
+    ENTRY_BG = "#2d2d2d"
+    FG       = "#ffffff"
+    FG2      = "#aaaaaa"
+    ACCENT   = "#d23228"
+    BTN_BG   = "#2d2d2d"
+    BTN_HV   = "#3d3d3d"
+    W        = 340
 
-    count = len(_get_apps())
-    label = f"{count} apps installed" if count else "Loading…"
+    root = tk.Tk()
+    root.withdraw()
+    root.overrideredirect(True)
 
-    return pystray.Menu(
-        pystray.MenuItem(label, None, enabled=False),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Refresh", refresh_fn),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Quit", lambda icon, item: icon.stop()),
-    )
+    win = tk.Toplevel(root)
+    win.overrideredirect(True)
+    win.configure(bg=BG)
+    win.attributes("-topmost", True)
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    hdr = tk.Frame(win, bg=BG, padx=14, pady=10)
+    hdr.pack(fill="x")
+    tk.Label(hdr, text="🗑  ShooApp", bg=BG, fg=FG,
+             font=("Segoe UI", 12, "bold")).pack(side="left")
+
+    # ── Separator ────────────────────────────────────────────────────────────
+    tk.Frame(win, bg="#333333", height=1).pack(fill="x")
+
+    # ── Count label ──────────────────────────────────────────────────────────
+    count_var = tk.StringVar(value=f"{len(_get_apps())} apps installed")
+    tk.Label(win, textvariable=count_var, bg=BG, fg=FG2,
+             font=("Segoe UI", 9), padx=14, pady=6).pack(anchor="w")
+
+    # ── Search ───────────────────────────────────────────────────────────────
+    sf = tk.Frame(win, bg=BG2, padx=10, pady=6)
+    sf.pack(fill="x", padx=10, pady=(0, 6))
+    tk.Label(sf, text="🔍", bg=BG2, fg=FG2, font=("Segoe UI", 9)).pack(side="left")
+    search_var = tk.StringVar()
+    entry = tk.Entry(sf, textvariable=search_var, bg=BG2, fg=FG,
+                     insertbackground=FG, relief="flat",
+                     font=("Segoe UI", 10), bd=0)
+    entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+    PLACEHOLDER = "Search apps…"
+    entry.insert(0, PLACEHOLDER)
+    entry.config(fg=FG2)
+
+    def on_focus_in(e):
+        if entry.get() == PLACEHOLDER:
+            entry.delete(0, "end")
+            entry.config(fg=FG)
+
+    def on_focus_out_entry(e):
+        if not entry.get():
+            entry.insert(0, PLACEHOLDER)
+            entry.config(fg=FG2)
+
+    entry.bind("<FocusIn>",  on_focus_in)
+    entry.bind("<FocusOut>", on_focus_out_entry)
+
+    # ── Separator ────────────────────────────────────────────────────────────
+    tk.Frame(win, bg="#333333", height=1).pack(fill="x", padx=0, pady=(4, 0))
+
+    # ── Buttons ──────────────────────────────────────────────────────────────
+    bf = tk.Frame(win, bg=BG, padx=10, pady=10)
+    bf.pack(fill="x")
+
+    def make_btn(parent, text, cmd):
+        b = tk.Button(parent, text=text, command=cmd,
+                      bg=BTN_BG, fg=FG, activebackground=BTN_HV,
+                      activeforeground=FG, relief="flat", bd=0,
+                      font=("Segoe UI", 9), padx=12, pady=6, cursor="hand2")
+        b.pack(side="left", padx=(0, 6))
+        return b
+
+    def do_refresh():
+        count_var.set("Refreshing…")
+        def _r():
+            _refresh_cache()
+            icon._left_menu = _build_app_menu(icon)
+            icon.title = f"ShooApp \u2014 {len(_get_apps())} apps"
+            count_var.set(f"{len(_get_apps())} apps installed")
+        threading.Thread(target=_r, daemon=True).start()
+
+    def do_quit():
+        win.destroy()
+        root.destroy()
+        icon.stop()
+
+    make_btn(bf, "🔄  Refresh", do_refresh)
+    make_btn(bf, "✕  Quit",    do_quit)
+
+    # ── Position near cursor, above taskbar ──────────────────────────────────
+    win.update_idletasks()
+    h = win.winfo_reqheight()
+    import ctypes
+    pt = ctypes.wintypes.POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+    sw = win.winfo_screenwidth()
+    sh = win.winfo_screenheight()
+    x = min(pt.x, sw - W - 4)
+    y = max(pt.y - h - 4, 0)
+    win.geometry(f"{W}x{h}+{x}+{y}")
+
+    # Close on focus loss
+    def on_focus_out(e):
+        if e.widget is win:
+            win.destroy()
+            root.destroy()
+
+    win.bind("<FocusOut>", on_focus_out)
+    win.focus_force()
+    entry.focus_set()
+    root.mainloop()
 
 
 def _force_refresh(icon: pystray.Icon) -> None:
     _refresh_cache()
-    icon._left_menu  = _build_app_menu(icon)
-    icon._right_menu = _build_action_menu(icon)
-    icon.menu        = icon._right_menu
+    icon._left_menu = _build_app_menu(icon)
+    icon.menu       = icon._left_menu
     count = len(_get_apps())
-    icon.title = f"ShooApp — {count} apps"
+    icon.title = f"ShooApp \u2014 {count} apps"
 
 
 # ---------------------------------------------------------------------------
@@ -204,14 +316,14 @@ def _create_icon_image() -> Image.Image:
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=12, fill=(40, 40, 40, 230))
+    # Solid red full-fill background
+    draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=10, fill=(210, 50, 40, 255))
 
-    m = 14
-    lw = 6
-    draw.rectangle([m, m, size - m, size - m], outline=(220, 80, 60), width=3)
-    inner = m + 8
-    draw.line([inner, inner, size - inner, size - inner], fill=(220, 80, 60), width=lw)
-    draw.line([size - inner, inner, inner, size - inner], fill=(220, 80, 60), width=lw)
+    # Bold white X filling most of the icon
+    m = 10
+    lw = 10
+    draw.line([m, m, size - m, size - m], fill=(255, 255, 255, 255), width=lw)
+    draw.line([size - m, m, m, size - m], fill=(255, 255, 255, 255), width=lw)
 
     return img
 
@@ -270,6 +382,9 @@ def main() -> None:
 
         def _patched_on_notify(wparam, lparam):
             if lparam in (WM_LBUTTONUP, NIN_SELECT):
+                _refresh_cache()
+                icon._left_menu = _build_app_menu(icon)
+                icon.title = f"ShooApp \u2014 {len(_get_apps())} apps"
                 _show_menu_for(icon._left_menu)
             elif lparam == WM_RBUTTONUP:
                 _show_menu_for(icon._right_menu)
