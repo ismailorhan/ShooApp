@@ -37,8 +37,27 @@ A lightweight Windows system tray app for uninstalling programs — without open
 ## Requirements
 
 - Windows 10 / 11
+- Admin rights (uninstallers usually need them). The compiled exe ships with
+  a `requireAdministrator` manifest, so Windows triggers UAC automatically.
 
-## Run (from source)
+## Install (end users)
+
+Use the installer produced by `installer.iss`:
+
+```
+dist\ShooAppSetup.exe
+```
+
+The wizard offers two optional tasks:
+
+- **Start automatically when Windows starts** — creates a per-user Startup
+  shortcut. Checked by default.
+- **Create a desktop shortcut** — off by default.
+
+Auto-start can also be toggled later from the tray icon's right-click menu
+(**Windows başladığında başlat**).
+
+## Run (from source — dev)
 
 ```bash
 pip install -r requirements.txt
@@ -47,9 +66,20 @@ pythonw shoo.py
 
 ## Build EXE
 
-```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --name ShooApp --icon=shooapp.ico shoo.py
+```bat
+build.bat
 ```
 
-Output: `dist\ShooApp.exe` — no installation needed, runs standalone.
+`build.bat` installs PyInstaller, cleans previous artefacts, and produces
+`dist\ShooApp.exe` with the admin manifest embedded (`--uac-admin`).
+
+## Build Installer
+
+1. Run `build.bat` to produce `dist\ShooApp.exe`.
+2. Open `installer.iss` in Inno Setup Compiler (or run `iscc installer.iss`).
+3. Output: `dist\ShooAppSetup.exe`.
+
+## Configuration
+
+The auto-start preference is stored at
+`%APPDATA%\ShooApp\config.json`.

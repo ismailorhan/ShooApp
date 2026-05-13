@@ -17,6 +17,9 @@ from tkinter import messagebox, ttk
 from PIL import Image, ImageDraw, ImageTk
 import pystray
 
+import autostart
+import config
+
 
 # ---------------------------------------------------------------------------
 # Registry helpers
@@ -145,9 +148,24 @@ def _run_uninstall(app: dict, icon: pystray.Icon) -> None:
 # Menu builders
 # ---------------------------------------------------------------------------
 
+def _toggle_autostart() -> None:
+    new_state = not config.load_auto_start()
+    config.save_auto_start(new_state)
+    try:
+        autostart.apply(new_state)
+    except Exception as exc:
+        _show_error(f"Otomatik başlatma uygulanamadı:\n{exc}")
+
+
 def _build_quit_menu(icon: pystray.Icon) -> pystray.Menu:
     return pystray.Menu(
-        pystray.MenuItem("Quit", lambda i, item: i.stop())
+        pystray.MenuItem(
+            "Windows başladığında başlat",
+            lambda i, item: _toggle_autostart(),
+            checked=lambda item: config.load_auto_start(),
+        ),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Quit", lambda i, item: i.stop()),
     )
 
 
