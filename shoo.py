@@ -142,6 +142,43 @@ def _is_clickonce(uninstall_cmd: str) -> bool:
     return "dfshim.dll" in uninstall_cmd.lower()
 
 
+def _find_msi_product_code(display_name: str) -> str | None:
+    """Search all ARP entries for an MSI-based row with the same DisplayName.
+
+    ClickOnce wrappers around an underlying MSI register two ARP entries:
+    one for ClickOnce (with dfshim.dll in UninstallString) and one for the
+    MSI itself (with WindowsInstaller=1 and a GUID subkey). The MSI entry is
+    what Programs and Features actually invokes — match it by display name.
+    """
+    target = display_name.strip().lower()
+    for hive, key_path in _REG_PATHS:
+        try:
+            with winreg.OpenKey(hive, key_path) as key:
+                count = winreg.QueryInfoKey(key)[0]
+                for i in range(count):
+                    try:
+                        sub_name = winreg.EnumKey(key, i)
+                        if not (sub_name.startswith("{") and sub_name.endswith("}")):
+                            continue
+                        with winreg.OpenKey(key, sub_name) as sub:
+                            try:
+                                name = winreg.QueryValueEx(sub, "DisplayName")[0].strip().lower()
+                            except OSError:
+                                continue
+                            if name != target:
+                                continue
+                            try:
+                                if int(winreg.QueryValueEx(sub, "WindowsInstaller")[0]) == 1:
+                                    return sub_name
+                            except OSError:
+                                continue
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Uninstall action
 # ---------------------------------------------------------------------------
@@ -153,21 +190,33 @@ def _run_uninstall(app: dict, icon: pystray.Icon) -> None:
     uninstall_cmd = app["uninstall"]
 
     # Windows 11's modernised ClickOnce maintenance dialog only offers
-    # Reinstall / Launch — the legacy "Remove" option is gone. Apps & Features
-    # bypasses that dialog through an internal API, but invoking the registry
-    # UninstallString directly (as we do here) hits the dialog. Defer to the
-    # classic Programs and Features panel, which still uninstalls properly.
+    # Reinstall / Launch — the legacy "Remove" option is gone. For hybrid
+    # ClickOnce-over-MSI apps the real uninstall lives in a sibling MSI ARP
+    # entry; find it by matching DisplayName and call msiexec directly.
     if _is_clickonce(uninstall_cmd):
+        product_code = _find_msi_product_code(app["name"])
+        if product_code:
+            try:
+                subprocess.Popen(
+                    ["msiexec.exe", "/x", product_code, "/passive", "/norestart"]
+                )
+            except Exception as exc:
+                _show_error(f"MSI uninstall failed to start:\n{exc}")
+                return
+            threading.Timer(6.0, lambda: _force_refresh(icon)).start()
+            return
+
+        # Pure ClickOnce (no MSI sibling) — defer to Programs and Features.
         try:
             subprocess.Popen(["control.exe", "appwiz.cpl"])
         except Exception as exc:
             _show_error(f"Could not open Programs and Features:\n{exc}")
             return
         _show_info(
-            f'"{app["name"]}" is a ClickOnce app.\n\n'
+            f'"{app["name"]}" is a ClickOnce app with no underlying MSI.\n\n'
             "Windows 11's Reinstall/Launch dialog does not expose an Uninstall "
-            "option for these. The classic Programs and Features panel has "
-            "been opened — please remove the app from there."
+            "option. The classic Programs and Features panel has been opened "
+            "— please remove the app from there."
         )
         return
 
