@@ -275,6 +275,13 @@ def _show_panel(icon: pystray.Icon) -> None:
     _refresh_cache()
     all_apps = _get_apps()
 
+    def _close_panel():
+        try:
+            win.destroy()
+            root.destroy()
+        except Exception:
+            pass
+
     # ── Header ───────────────────────────────────────────────────────────────
     hdr = tk.Frame(win, bg=BG, padx=14, pady=10)
     hdr.pack(fill="x")
@@ -283,6 +290,15 @@ def _show_panel(icon: pystray.Icon) -> None:
     hdr._app_icon_ref = _app_icon_photo  # prevent GC
     tk.Label(hdr, text="ShooApp", bg=BG, fg=FG,
              font=("Segoe UI", 12, "bold")).pack(side="left")
+
+    close_btn = tk.Label(
+        hdr, text="✕", bg=BG, fg=FG2,
+        font=("Segoe UI", 11), padx=8, pady=2, cursor="hand2",
+    )
+    close_btn.pack(side="right")
+    close_btn.bind("<Button-1>", lambda e: _close_panel())
+    close_btn.bind("<Enter>",    lambda e: close_btn.config(fg="#ff6b6b", bg=BG2))
+    close_btn.bind("<Leave>",    lambda e: close_btn.config(fg=FG2, bg=BG))
 
     tk.Frame(win, bg="#333333", height=1).pack(fill="x")
 
@@ -415,7 +431,14 @@ def _show_panel(icon: pystray.Icon) -> None:
             win.after(0, lambda: _populate(search_var.get()))
         threading.Thread(target=_r, daemon=True).start()
 
+    def do_open_appwiz():
+        try:
+            subprocess.Popen(["control.exe", "appwiz.cpl"])
+        except Exception as exc:
+            _show_error(f"Could not open Programs and Features:\n{exc}")
+
     make_btn(bf, "🔄  Refresh", do_refresh)
+    make_btn(bf, "🧩  Open Prog. and Feat.", do_open_appwiz)
 
     # ── Position near cursor, above taskbar ──────────────────────────────────
     win.update_idletasks()
