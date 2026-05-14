@@ -10,7 +10,7 @@
 
 #define MyAppName        "ShooApp"
 #define MyAppVersion     "1.0.0"
-#define MyAppPublisher   "ShooApp"
+#define MyAppPublisher   "ismailorhan"
 #define MyAppExeName     "ShooApp.exe"
 #define MyAppId          "{{B7C2D9E4-5F1A-4B6C-8D3E-2A7F1B9C4D5E}}"
 
