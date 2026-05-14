@@ -129,6 +129,19 @@ def _show_error(message: str) -> None:
     root.destroy()
 
 
+def _show_info(message: str) -> None:
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    messagebox.showinfo("ShooApp", message, parent=root)
+    root.destroy()
+
+
+def _is_clickonce(uninstall_cmd: str) -> bool:
+    """Detect ClickOnce apps by their dfshim-based UninstallString."""
+    return "dfshim.dll" in uninstall_cmd.lower()
+
+
 # ---------------------------------------------------------------------------
 # Uninstall action
 # ---------------------------------------------------------------------------
@@ -136,8 +149,30 @@ def _show_error(message: str) -> None:
 def _run_uninstall(app: dict, icon: pystray.Icon) -> None:
     if not _confirm_uninstall(app):
         return
+
+    uninstall_cmd = app["uninstall"]
+
+    # Windows 11's modernised ClickOnce maintenance dialog only offers
+    # Reinstall / Launch — the legacy "Remove" option is gone. Apps & Features
+    # bypasses that dialog through an internal API, but invoking the registry
+    # UninstallString directly (as we do here) hits the dialog. Defer to the
+    # classic Programs and Features panel, which still uninstalls properly.
+    if _is_clickonce(uninstall_cmd):
+        try:
+            subprocess.Popen(["control.exe", "appwiz.cpl"])
+        except Exception as exc:
+            _show_error(f"Could not open Programs and Features:\n{exc}")
+            return
+        _show_info(
+            f'"{app["name"]}" is a ClickOnce app.\n\n'
+            "Windows 11's Reinstall/Launch dialog does not expose an Uninstall "
+            "option for these. The classic Programs and Features panel has "
+            "been opened — please remove the app from there."
+        )
+        return
+
     try:
-        subprocess.Popen(app["uninstall"], shell=True)
+        subprocess.Popen(uninstall_cmd, shell=True)
     except Exception as exc:
         _show_error(f"Could not launch uninstaller:\n{exc}")
         return
