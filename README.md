@@ -8,30 +8,51 @@ A lightweight Windows system tray app for uninstalling programs — without open
 - **Left-click** → opens a dark floating panel with all installed apps
   - Search bar with live filtering
   - Table view: Application, Version, Installed date
-  - Double-click or press Enter to launch the uninstaller
-  - Refresh button to update the list
-- **Right-click** → Quit
+  - **Checkbox column** for selecting multiple apps at once
+  - Double-click or press Enter to uninstall a single app
+- **Right-click** → menu with auto-start toggle and Quit
 - **Hover** over the tray icon → tooltip refreshes and shows current app count
+
+### Uninstalling
+
+- Each uninstall tries a **silent `winget uninstall`** first. If winget can't
+  handle it, ShooApp falls back to the app's own uninstaller (including
+  ClickOnce → sibling-MSI handling for Windows 11).
+- **Multi-select:** check any number of rows, then hit the red **Uninstall (N)**
+  button. Checked apps are removed **one at a time** (sequential — never two
+  installers at once) and progress is shown right on the tray icon (a count
+  badge) plus start/finish toast notifications.
+
+### Keyboard & panel behaviour
+
+- **Space** — toggle the checkbox on the focused row
+- **↓ (from search)** — jump into the list; arrows move, Space checks
+- **F5** — refresh the list and return focus to the search box
+- **Tab** — cycles between the search box and the bottom buttons
+- **Esc** or the **✕** button — always close the panel
+- Clicking outside keeps the panel open when a search query is typed or rows
+  are checked, so nothing is lost by accident
+- The panel anchors to the work-area bottom-right, like standard tray flyouts
 
 ## Screenshot
 
 > Left-click the tray icon to open the dark app panel.
 
 ```
-┌─────────────────────────────────────────────┐
-│ 🔴 ShooApp                                  │
-├─────────────────────────────────────────────┤
-│ 210 apps installed                          │
-│ 🔍 Search apps...                           │
-├──────────────────────┬──────────┬───────────┤
-│ Application          │ Version  │ Installed │
-├──────────────────────┼──────────┼───────────┤
-│ Adobe Acrobat        │ 24.0     │ 01.03.2025│
-│ Visual Studio Code   │ 1.87     │ 15.02.2025│
-│ ...                  │          │           │
-├─────────────────────────────────────────────┤
-│ [🔄 Refresh]                                │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│ 🗑️ ShooApp                                       ✕ │
+├─────────────────────────────────────────────────────┤
+│ 210 apps installed                                  │
+│ 🔍 Search apps...                                   │
+├───┬──────────────────────┬──────────┬───────────────┤
+│   │ Application          │ Version  │ Installed     │
+├───┼──────────────────────┼──────────┼───────────────┤
+│ ☑ │ Adobe Acrobat        │ 24.0     │ 01.03.2025    │
+│ ☐ │ Visual Studio Code   │ 1.87     │ 15.02.2025    │
+│ ☑ │ ...                  │          │               │
+├─────────────────────────────────────────────────────┤
+│ [🗑️ Uninstall (2)]  [🔄 Refresh]  [🧩 Prog. & Feat.]│
+└─────────────────────────────────────────────────────┘
 ```
 
 ## Requirements
