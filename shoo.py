@@ -14,7 +14,7 @@ import winreg
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 import pystray
 
 import autostart
@@ -113,7 +113,9 @@ def _confirm_uninstall(app: dict) -> bool:
     root.attributes("-topmost", True)
     result = messagebox.askyesno(
         "ShooApp — Uninstall",
-        f"Uninstall \"{app['name']}\"?\n\nThe app's own uninstaller will open.",
+        f"Uninstall \"{app['name']}\"?\n\n"
+        "Tries a silent uninstall via winget first; if that's not "
+        "possible, the app's own uninstaller will open.",
         icon="warning",
         parent=root,
     )
@@ -183,9 +185,52 @@ def _find_msi_product_code(display_name: str) -> str | None:
 # Uninstall action
 # ---------------------------------------------------------------------------
 
-def _run_uninstall(app: dict, icon: pystray.Icon) -> None:
-    if not _confirm_uninstall(app):
-        return
+def _winget_run(args: list[str]) -> bool:
+    try:
+        result = subprocess.run(
+            args,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=120,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _try_winget_uninstall(name: str) -> bool:
+    """Try an unattended uninstall via winget.
+
+    winget fingerprints the ARP UninstallString to recognize common installer
+    technologies (MSI, Inno Setup, NSIS, ...) and drives it appropriately,
+    even for apps outside its manifest repo. Returns True on success so the
+    caller can skip the app's own uninstaller.
+
+    Tries --silent first (fully invisible for most apps). Some MSI-backed
+    apps reject the resulting msiexec /quiet with exit 1603, so on failure
+    we retry without --silent — that still finishes unattended, just with a
+    brief, no-interaction "configuring" progress box instead of nothing.
+    """
+    base = [
+        "winget", "uninstall",
+        "--exact", "--name", name,
+        "--accept-source-agreements",
+    ]
+    return _winget_run([*base, "--silent"]) or _winget_run(base)
+
+
+def _perform_uninstall(app: dict) -> tuple[str, str]:
+    """Uninstall one app, blocking until it's actually done.
+
+    Blocking (rather than fire-and-forget) is what makes sequential batch
+    uninstalls safe — two concurrent MSI operations can collide, so callers
+    must wait for one to finish before starting the next.
+
+    Returns (status, detail): "ok" on success, "manual" if it needs removal
+    from Programs and Features by hand, "error" if it couldn't even start.
+    """
+    if _try_winget_uninstall(app["name"]):
+        return "ok", ""
 
     uninstall_cmd = app["uninstall"]
 
@@ -197,35 +242,114 @@ def _run_uninstall(app: dict, icon: pystray.Icon) -> None:
         product_code = _find_msi_product_code(app["name"])
         if product_code:
             try:
-                subprocess.Popen(
-                    ["msiexec.exe", "/x", product_code, "/passive", "/norestart"]
+                subprocess.run(
+                    ["msiexec.exe", "/x", product_code, "/passive", "/norestart"],
+                    check=False,
                 )
             except Exception as exc:
-                _show_error(f"MSI uninstall failed to start:\n{exc}")
-                return
-            threading.Timer(6.0, lambda: _force_refresh(icon)).start()
-            return
+                return "error", f"MSI uninstall failed to start:\n{exc}"
+            return "ok", ""
 
         # Pure ClickOnce (no MSI sibling) — defer to Programs and Features.
         try:
             subprocess.Popen(["control.exe", "appwiz.cpl"])
         except Exception as exc:
-            _show_error(f"Could not open Programs and Features:\n{exc}")
-            return
-        _show_info(
+            return "error", f"Could not open Programs and Features:\n{exc}"
+        return "manual", (
             f'"{app["name"]}" is a ClickOnce app with no underlying MSI.\n\n'
             "Windows 11's Reinstall/Launch dialog does not expose an Uninstall "
             "option. The classic Programs and Features panel has been opened "
             "— please remove the app from there."
         )
-        return
 
     try:
-        subprocess.Popen(uninstall_cmd, shell=True)
+        subprocess.run(uninstall_cmd, shell=True, check=False)
     except Exception as exc:
-        _show_error(f"Could not launch uninstaller:\n{exc}")
+        return "error", f"Could not launch uninstaller:\n{exc}"
+    return "ok", ""
+
+
+def _run_uninstall(app: dict, icon: pystray.Icon) -> None:
+    if not _confirm_uninstall(app):
         return
-    threading.Timer(4.0, lambda: _force_refresh(icon)).start()
+
+    status, detail = _perform_uninstall(app)
+    if status == "error":
+        _show_error(detail)
+        return
+    if status == "manual":
+        _show_info(detail)
+    _force_refresh(icon)
+
+
+def _confirm_uninstall_many(apps: list[dict]) -> bool:
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    names = "\n".join(f"• {a['name']}" for a in apps)
+    plural = "s" if len(apps) != 1 else ""
+    result = messagebox.askyesno(
+        "ShooApp — Uninstall",
+        f"Uninstall {len(apps)} app{plural}, one at a time?\n\n{names}\n\n"
+        "Tries a silent winget uninstall for each; if that's not possible "
+        "for one of them, its own uninstaller may open and need attention "
+        "before the next app starts.",
+        icon="warning",
+        parent=root,
+    )
+    root.destroy()
+    return result
+
+
+def _run_uninstall_many(apps: list[dict], icon: pystray.Icon) -> None:
+    if not apps or not _confirm_uninstall_many(apps):
+        return
+
+    n = len(apps)
+    orig_icon = icon.icon
+    plural = "s" if n != 1 else ""
+    try:
+        icon.notify(f"Uninstalling {n} app{plural}…", "ShooApp")
+    except Exception:
+        pass
+
+    manual: list[str] = []
+    errors: list[str] = []
+    for i, app in enumerate(apps, 1):
+        # Show progress on the tray icon itself (badge) + tooltip.
+        try:
+            icon.icon = _icon_with_badge(str(i))
+            icon.title = f"ShooApp — Uninstalling ({i}/{n}): {app['name']}"
+        except Exception:
+            pass
+        status, detail = _perform_uninstall(app)
+        if status == "error":
+            errors.append(f"{app['name']}: {detail}")
+        elif status == "manual":
+            manual.append(app["name"])
+
+    try:
+        icon.icon = orig_icon
+    except Exception:
+        pass
+    _force_refresh(icon)
+
+    done = n - len(errors) - len(manual)
+    try:
+        icon.notify(f"Done — {done} of {n} removed.", "ShooApp")
+    except Exception:
+        pass
+
+    if manual or errors:
+        parts = []
+        if manual:
+            parts.append(
+                "Needs manual removal from Programs and Features:\n"
+                + "\n".join(f"• {n}" for n in manual)
+            )
+        if errors:
+            parts.append("Failed:\n" + "\n".join(f"• {e}" for e in errors))
+        _show_info("Uninstall finished.\n\n" + "\n\n".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +385,9 @@ def _show_panel(icon: pystray.Icon) -> None:
     SEL_BG = "#3a3a3a"
     BTN_BG = "#2d2d2d"
     BTN_HV = "#3d3d3d"
+    DANGER     = "#c0392b"  # scary red — active Uninstall button
+    DANGER_HV  = "#e04434"  # brighter red on hover
+    DANGER_OFF = "#3a2626"  # muted red when nothing is checked
     W      = 460
 
     root = tk.Tk()
@@ -338,12 +465,14 @@ def _show_panel(icon: pystray.Icon) -> None:
 
     scrollbar = tk.Scrollbar(list_frame, bg=BG2, troughcolor=BG,
                              activebackground=BTN_HV, relief="flat", bd=0, width=8)
-    tree = ttk.Treeview(list_frame, columns=("app", "version", "date"), show="headings",
+    tree = ttk.Treeview(list_frame, columns=("sel", "app", "version", "date"), show="headings",
                         style="Dark.Treeview", height=14,
-                        yscrollcommand=scrollbar.set)
+                        yscrollcommand=scrollbar.set, takefocus=False)
+    tree.heading("sel",     text="",            anchor="center")
     tree.heading("app",     text="Application", anchor="w")
     tree.heading("version", text="Version",     anchor="w")
     tree.heading("date",    text="Installed",   anchor="w")
+    tree.column("sel",     width=26,  stretch=False, anchor="center", minwidth=26)
     tree.column("app",     width=240, stretch=True,  anchor="w", minwidth=100)
     tree.column("version", width=100, stretch=False, anchor="w", minwidth=60)
     tree.column("date",    width=80,  stretch=False, anchor="w", minwidth=70)
@@ -352,6 +481,10 @@ def _show_panel(icon: pystray.Icon) -> None:
     scrollbar.pack(side="right", fill="y")
 
     _filtered: list[dict] = []
+    checked: dict[tuple, dict] = {}
+
+    def _app_key(app: dict) -> tuple:
+        return (app["name"], app["uninstall"])
 
     def _populate(query: str = "") -> None:
         q = query.lower().strip()
@@ -361,7 +494,8 @@ def _show_panel(icon: pystray.Icon) -> None:
         for app in all_apps:
             if q in app["name"].lower() or q in app["publisher"].lower():
                 _filtered.append(app)
-                tree.insert("", "end", values=(app["name"], app["version"] or "", app["install_date"] or ""))
+                glyph = "☑" if _app_key(app) in checked else "☐"
+                tree.insert("", "end", values=(glyph, app["name"], app["version"] or "", app["install_date"] or ""))
         count_var.set(
             f"{len(_filtered)} of {len(all_apps)} apps"
             if q else f"{len(all_apps)} apps installed"
@@ -403,8 +537,77 @@ def _show_panel(icon: pystray.Icon) -> None:
                 tree.selection_set(children[0])
                 tree.focus(children[0])
 
+    def _update_checked_button():
+        n = len(checked)
+        if n:
+            checked_btn_var.set(f"🗑️  Uninstall ({n})")
+            checked_btn.config(state="normal", bg=DANGER, activebackground=DANGER_HV)
+        else:
+            checked_btn_var.set("🗑️  Uninstall")
+            checked_btn.config(state="disabled", bg=DANGER_OFF, activebackground=DANGER_OFF)
+
+    def _toggle_checked_item(item) -> None:
+        if not item:
+            return
+        idx = tree.index(item)
+        if not (0 <= idx < len(_filtered)):
+            return
+        app = _filtered[idx]
+        key = _app_key(app)
+        if key in checked:
+            del checked[key]
+            tree.set(item, "sel", "☐")
+        else:
+            checked[key] = app
+            tree.set(item, "sel", "☑")
+        _update_checked_button()
+
+    def _toggle_checked_key(event=None):
+        # Some keyboard layouts don't map the spacebar to the "space" keysym
+        # (Tk reports it as "??" here), so match on the produced character.
+        if event is not None and event.char != " " and event.keysym != "space":
+            return
+        # Prefer the item with keyboard focus; fall back to the (highlighted)
+        # selection so Space works even when only the row is selected.
+        item = tree.focus()
+        if not item:
+            sel = tree.selection()
+            item = sel[0] if sel else ""
+        _toggle_checked_item(item)
+        return "break"
+
+    def _on_tree_click(event):
+        # A plain mouse click only moves the Treeview's internal item-focus/
+        # selection — it does NOT grab Tk keyboard focus for this widget, so
+        # <space> would silently do nothing afterwards without this.
+        tree.focus_set()
+        row = tree.identify_row(event.y)
+        if not row:
+            return
+        tree.focus(row)
+        tree.selection_set(row)
+        if tree.identify_column(event.x) == "#1":
+            _toggle_checked_item(row)
+            return "break"
+
+    def do_uninstall_checked():
+        apps = list(checked.values())
+        if not apps:
+            return
+        try:
+            win.destroy()
+            root.destroy()
+        except Exception:
+            pass
+        threading.Thread(
+            target=_run_uninstall_many, args=(apps, icon), daemon=True
+        ).start()
+
+    tree.bind("<Button-1>",        _on_tree_click)
     tree.bind("<Double-Button-1>", lambda e: _launch_selected())
     tree.bind("<Return>",          lambda e: _launch_selected())
+    tree.bind("<space>",           _toggle_checked_key)
+    tree.bind("<KeyPress>",        _toggle_checked_key)
     entry.bind("<Return>",         lambda e: (_select_first() or _launch_selected()))
     entry.bind("<Down>",           lambda e: _focus_tree())
 
@@ -437,28 +640,56 @@ def _show_panel(icon: pystray.Icon) -> None:
         except Exception as exc:
             _show_error(f"Could not open Programs and Features:\n{exc}")
 
+    # Uninstall goes leftmost; it's the primary action.
+    checked_btn_var = tk.StringVar(value="🗑️  Uninstall")
+    checked_btn = tk.Button(bf, textvariable=checked_btn_var, command=do_uninstall_checked,
+                             bg=DANGER_OFF, fg=FG, activebackground=DANGER_OFF,
+                             activeforeground=FG, disabledforeground="#8a7070",
+                             relief="flat", bd=0, font=("Segoe UI", 9, "bold"),
+                             padx=12, pady=5, cursor="hand2", state="disabled")
+    checked_btn.pack(side="left", padx=(0, 6))
+
     make_btn(bf, "🔄  Refresh", do_refresh)
     make_btn(bf, "🧩  Open Prog. and Feat.", do_open_appwiz)
 
-    # ── Position near cursor, above taskbar ──────────────────────────────────
+    # F5 anywhere in the panel: refresh, then jump focus back to the search box.
+    def do_refresh_focus(event=None):
+        do_refresh()
+        entry.focus_set()
+        entry.selection_range(0, "end")
+        return "break"
+
+    win.bind("<F5>", do_refresh_focus)
+
+    # ── Anchor to the work area's bottom-right corner ─────────────────────────
+    # This is how standard Windows tray flyouts (Quick Settings, clock) place
+    # themselves: flush to the taskbar edge, not floating at the cursor. The
+    # work area (SPI_GETWORKAREA) is the screen minus the taskbar, so its
+    # bottom-right is exactly the spot just above the tray.
     win.update_idletasks()
     h = win.winfo_reqheight()
-    pt = ctypes.wintypes.POINT()
-    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-    sw = win.winfo_screenwidth()
-    x = min(pt.x, sw - W - 4)
-    y = max(pt.y - h - 4, 0)
-    win.geometry(f"{W}x{h}+{x}+{y}")
+    MARGIN = 12
+    work = ctypes.wintypes.RECT()
+    if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work), 0):
+        x = work.right - W - MARGIN
+        y = work.bottom - h - MARGIN
+    else:  # fallback: bottom-right of the full screen
+        x = win.winfo_screenwidth() - W - MARGIN
+        y = win.winfo_screenheight() - h - MARGIN
+    win.geometry(f"{W}x{h}+{max(x, 0)}+{max(y, 0)}")
 
-    # ── Close on focus loss ───────────────────────────────────────────────────
+    # ── Close on focus loss (unless the user has unsaved state) ───────────────
+    # If there's a search query typed or any row checked, clicking away must
+    # NOT discard it — the user keeps their work. ESC or the ✕ button always
+    # close explicitly.
+    def _has_pending_state() -> bool:
+        return bool(search_var.get().strip()) or bool(checked)
+
     def on_focus_out(e):
-        if e.widget is win:
-            try:
-                win.destroy()
-                root.destroy()
-            except Exception:
-                pass
+        if e.widget is win and not _has_pending_state():
+            _close_panel()
 
+    win.bind("<Escape>", lambda e: _close_panel())
     win.focus_force()
     entry.focus_set()
     win.after(200, lambda: win.bind("<FocusOut>", on_focus_out))
@@ -6439,6 +6670,30 @@ _LOGO_B64 = (
 def _create_icon_image() -> Image.Image:
     import base64, io
     return Image.open(io.BytesIO(base64.b64decode(_LOGO_B64))).convert("RGBA").resize((64, 64), Image.LANCZOS)
+
+
+def _icon_with_badge(text: str) -> Image.Image:
+    """The tray logo with a red count badge in the bottom-right corner.
+
+    Used during a batch uninstall to show progress right on the tray icon,
+    without needing the user to hover for the tooltip.
+    """
+    img = _create_icon_image().copy()
+    draw = ImageDraw.Draw(img)
+    d = 40 if len(text) > 1 else 34   # widen the badge for two digits
+    x0, y0 = 64 - d, 64 - d
+    draw.ellipse([x0, y0, 63, 63], fill=(220, 40, 40, 255),
+                 outline=(255, 255, 255, 255), width=2)
+    try:
+        font = ImageFont.truetype("segoeui.ttf", 24 if len(text) > 1 else 28)
+    except Exception:
+        font = ImageFont.load_default()
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    cx, cy = x0 + d / 2, y0 + d / 2
+    draw.text((cx - tw / 2 - bbox[0], cy - th / 2 - bbox[1]),
+              text, font=font, fill="white")
+    return img
 
 # ---------------------------------------------------------------------------
 # Entry point
